@@ -141,6 +141,13 @@ check('复制成功有回执', /已复制到剪贴板/.test(okTree), '');
 check('复制失败有回执（且提示手动复制）', /复制失败/.test(failTree) && /手动选中/.test(failTree), '');
 
 
+// ── ④b 刷新路径：停在「反馈」页刷新页面时，activeTab 直接从 localStorage 读出来、不走 switchTab，
+//        靠一条 effect 兜住（与「关于」页 star 数同款）。源码级钉形态，改写法要同步改这里。
+check('停在「反馈」页刷新也拉一次诊断（effect 兜住不走 switchTab 的那条路径）',
+  /React\.useEffect\(\(\) => \{ if \(activeTab === "feedback"\) loadFeedbackDiag\(false\); \}, \[activeTab\]\);/.test(clientSrc), '');
+check('switchTab 里也接了「反馈」（切页签时拉一次）',
+  /if \(id === "feedback"\) loadFeedbackDiag\(false\);/.test(clientSrc), '');
+
 // ── ⑤ 自动填：插件版本（构建期注入）+ 诊断（宿主环形缓冲，脱敏 + 截断）──────────────
 // 这两样是"用户不用管"的部分 —— 也正是最容易悄悄失效的部分（版本注入断了只是空白、
 // 诊断取不到只是空段），所以每条都要有正断言与负对照。

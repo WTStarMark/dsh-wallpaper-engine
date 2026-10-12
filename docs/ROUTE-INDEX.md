@@ -29,7 +29,7 @@
 | 13 | `/media-origin` | lib/routes/scene-serve.js:99 | 箭头 | disposers base mediaOriginInfo | 1 |
 | 14 | `/scene-payload-progress` | lib/routes/scene-serve.js:119 | 箭头 | disposers base payloadProgress | 1 |
 | 15 | `/props` | lib/routes/props.js:42 | 箭头 | disposers base mediaMap userPropsFor | 7 |
-| 16 | `/live-frame` | lib/routes/live-frame.js:41 | 箭头 | disposers base mediaMap serveFile traceRequests liveFrameFile …(+2) | 2 |
+| 16 | `/live-frame` | lib/routes/live-frame.js:41 | 箭头 | disposers base mediaMap serveFile traceRequests liveFrameFile …(+2) | 3 |
 | 17 | `/media-status` | lib/routes/now-playing.js:82 | 箭头 | disposers base | 2 |
 | 18 | `/audio-spectrum` | lib/routes/now-playing.js:92 | 箭头 | disposers base | 2 |
 | 19 | `/now-playing` | lib/routes/now-playing.js:111 | 箭头 | disposers base | 3 |
