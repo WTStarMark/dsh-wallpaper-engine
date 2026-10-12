@@ -1,7 +1,7 @@
 /**
  * panel-tabs.js — 面板页签的**渲染器**（七个域：壁纸 / 外观 / 吉祥物 / 效果 / 声音 / 高级 / 关于，
- * 再加一个**模块容器**「扩展」；组合成六页签 壁纸库 / 外观 / 播放 / 系统 / 扩展 / 关于，
- * 装配点见 src/client.js 的 renderActiveTab）。
+ * 再加一个**模块容器**「扩展」与一个静态页「反馈」；组合成七页签 壁纸库 / 外观 / 播放 /
+ * 系统 / 扩展 / 关于 / 反馈，装配点见 src/client.js 的 renderActiveTab）。
  *
  * 为什么单独一个文件：这些渲染器**读**面板状态、**调**面板处理器，但自己不持有状态 ——
  * 正是最适合独立出去的一层。这样面板组件体只剩"状态 + 处理器 + 装配"，页签怎么画看这里。
@@ -2414,7 +2414,232 @@
   }
 
 
+  // ── 「反馈」页签 ────────────────────────────────────────────────────────────
+  // 为什么要有它：issue 里最常缺的两样是**壁纸 ID** 和**环境**，来回问一轮就是一天。
+  // 这一页把这两样自动填好（壁纸取当前正在用的那张，可在下拉里改选），"现象 / 复现 / 期望"
+  // 留成空白让人补 —— 点一下复制，贴进 issue 或群里都行。
+  // 不读设置、不写设置：本页签只有两枚自己的 UI 状态（选中的壁纸 / "已复制"提示），
+  // 状态住在 client.js 的组件里（hook 规则：渲染器是普通函数，不许自带 hook）。
+  //
+  // 文案纪律：模板**逐行**都是完整的 `weT("…")` 句子，靠 join("\n") 组装 ——
+  // 不做 `weT("半句") + 变量` 的拼接（verify-i18n 把那种碎片判成"包过了"、英文语序对不上）。
+  // 诊断脱敏：渲染页告警里**会带凭据**（实时帧 token 就写在 URL 的 ?token=… 上）。
+  // 进模板 = 进公开 issue ⇒ 必须先打码。宁可码掉一点信息，也不让用户把凭据贴出去。
+  function redactDiagText(text) {
+    return String(text == null ? "" : text)
+      .replace(/([?&]token=)[^&\s"'<>]+/gi, "$1***")
+      .replace(/([?&](?:t|key|sig|secret)=)[A-Za-z0-9_.-]{12,}/gi, "$1***");
+  }
+
+  // 模板里的诊断段：**最近 N 行 + 总长有上限**（issue 的预填正文走 URL，太长会被截断；
+  // 用户也看不完）。空的时候给一句人话，而不是留一片空白 —— 空白会被当成"插件坏了"。
+  const FEEDBACK_DIAG_LINES = 20;
+  const FEEDBACK_DIAG_MAX = 1600;
+  function feedbackDiagExcerpt(entries) {
+    const list = Array.isArray(entries) ? entries : [];
+    const lines = list.slice(-FEEDBACK_DIAG_LINES).map((e) => {
+      const isObj = e && typeof e === "object";
+      const msg = isObj ? e.msg : e;
+      const t = isObj && Number.isFinite(Number(e.t)) ? Number(e.t) : null;
+      const stamp = t ? new Date(t).toISOString().slice(11, 19) : "";
+      return (stamp ? stamp + " " : "") + redactDiagText(msg);
+    });
+    let out = lines.join("\n");
+    if (out.length > FEEDBACK_DIAG_MAX) out = out.slice(out.length - FEEDBACK_DIAG_MAX);
+    return out;
+  }
+
+  function feedbackTemplateLines(ctx) {
+    const { picked, env, pluginVersion, diagText } = ctx;
+    const id = picked && picked.id ? String(picked.id) : weT("（未指定）");
+    const title = picked && picked.title ? String(picked.title) : weT("（未指定）");
+    const type = picked && picked.type ? String(picked.type) : weT("（未指定）");
+    return [
+      weT("标题：[bug] 一句话描述问题（可改）"),
+      "",
+      weT("## 现象"),
+      weT("（发生了什么？截图 / 录屏更好）"),
+      "",
+      weT("## 复现步骤"),
+      // 编号不带中文、两种语言同形 —— 不进词表（不进 weT 也不会被"零裸中文"判据扫到）。
+      "1. ",
+      "2. ",
+      "3. ",
+      "",
+      weT("## 期望"),
+      weT("（你希望它是什么样）"),
+      "",
+      weT("## 环境（自动填好，可直接改）"),
+      weT("- 插件版本：{version}", { version: pluginVersion || weT("（取不到，可在 设置 → 插件 里查看）") }),
+      weT("- 运行形态：{target}", { target: env.target }),
+      weT("- 浏览器 / 系统：{ua}", { ua: env.ua }),
+      weT("- 窗口 / 像素比：{size}", { size: env.size }),
+      "",
+      weT("## 壁纸"),
+      weT("- 壁纸 ID：{id}", { id }),
+      weT("- 标题：{title}", { title }),
+      weT("- 类型：{type}", { type }),
+      "",
+      weT("## 诊断（自动附带，最近 {n} 行宿主告警）", { n: String(FEEDBACK_DIAG_LINES) }),
+      diagText || weT("（暂时没取到：进「反馈」页会自动拉一次，也可以点上面的「刷新诊断」）"),
+      "",
+    ];
+  }
+
+  // 复制到剪贴板：先走异步剪贴板 API，失败再退到"临时 textarea + execCommand"（旧壳 / 无权限时
+  // 只有这条能成）。全部包在守卫里：本模块在无 DOM 的判据里也会被 import，不许在顶层碰 window。
+  function copyTextToClipboard(text) {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text).then(() => true, () => false);
+      }
+    } catch { /* 落到下面的兜底 */ }
+    try {
+      if (typeof document === "undefined" || !document.body) return Promise.resolve(false);
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "readonly");
+      ta.style.position = "fixed";
+      ta.style.top = "-1000px";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = typeof document.execCommand === "function" ? document.execCommand("copy") : false;
+      document.body.removeChild(ta);
+      return Promise.resolve(!!ok);
+    } catch {
+      return Promise.resolve(false);
+    }
+  }
+
+  // 环境三行：能自动探测就自动探测（运行形态 / UA / 窗口），取不到一律给 "-" 而不是崩。
+  function feedbackEnv() {
+    let target = "-";
+    try { target = String(adapterDetectedLabel() || "-"); } catch { /* 宿主还没上报就留 "-" */ }
+    const ua = (typeof navigator !== "undefined" && navigator.userAgent) ? String(navigator.userAgent) : "-";
+    let size = "-";
+    try {
+      if (typeof window !== "undefined" && window.innerWidth) {
+        size = String(window.innerWidth) + " x " + String(window.innerHeight) + " @ " + String(window.devicePixelRatio || 1) + "x";
+      }
+    } catch { /* 同上 */ }
+    return { target, ua, size };
+  }
+
+  function renderFeedbackTab(ctx) {
+    const { current, wallpapers, pickedId, onPickId, copyState, onCopyTemplate, repoUrl,
+      pluginVersion, diagEntries, diagBusy, diagCopyState, onCopyDiag, onRefreshDiag } = ctx;
+    const env = feedbackEnv();
+    const version = String(pluginVersion || "");
+    const diagText = feedbackDiagExcerpt(diagEntries);
+    const items = Array.isArray(wallpapers) ? wallpapers : [];
+    // 自动探测：默认就是**当前正在用的那张**（pickedId 为空 = 跟随当前），也能在下拉里改选。
+    const picked = items.find((w) => String(w.id) === String(pickedId)) || current || null;
+    const text = feedbackTemplateLines({ picked, env, pluginVersion: version, diagText }).join("\n");
+    // 预填 issue：标题与正文都带上，用户只需补"现象 / 复现 / 期望"。
+    const issueTitle = weT("标题：[bug] 一句话描述问题（可改）");
+    const issueUrl = repoUrl + "/issues/new?title=" + encodeURIComponent(issueTitle) + "&body=" + encodeURIComponent(text);
+    // 「#id · 标题 · 类型」是格式而非句子（两种语言同形）⇒ 普通拼接，不进词表。
+    const pickLabel = picked
+      ? "#" + String(picked.id || "-") + " · " + String(picked.title || weT("（无标题）")) + " · " + String(picked.type || "-")
+      : weT("（没探测到正在用的壁纸，可在下拉里选一张）");
+    return React.createElement(React.Fragment, null,
+      // ── ① 去哪提 + 两个出口 ──
+      React.createElement("div", { className: "we-picker__section" },
+        React.createElement("div", { className: "we-picker__section-head" },
+          React.createElement("span", { className: "we-picker__section-label" }, weT("🐞 反馈与提 issue")),
+        ),
+        React.createElement("p", { className: "we-about__p" },
+          weT("遇到问题、想要新功能，欢迎来仓库提 issue。发之前先搜一眼有没有人提过（同一个问题聚在一处更好查），然后把下面这份模板复制过去 —— 里面的环境和壁纸信息已经替你填好了。")),
+        React.createElement("div", { className: "we-feedback__btn-row" },
+          React.createElement("a", {
+            className: "we-picker__btn we-picker__btn--primary",
+            href: issueUrl,
+            target: "_blank",
+            rel: "noopener noreferrer",
+            title: weT("打开 GitHub 新建 issue，标题与正文已预填"),
+          }, weT("🐞 去 GitHub 新建 issue")),
+          React.createElement("button", {
+            className: "we-picker__btn",
+            type: "button",
+            onClick: () => onCopyTemplate(text),
+            title: weT("把模板整段复制到剪贴板（贴到 issue、群里都行）"),
+          }, weT("📋 复制模板")),
+        ),
+        copyState === "ok" && React.createElement("div", { className: "we-feedback__status we-feedback__status--ok" },
+          weT("✅ 已复制到剪贴板")),
+        copyState === "fail" && React.createElement("div", { className: "we-feedback__status we-feedback__status--fail" },
+          weT("⚠️ 复制失败（浏览器不让写剪贴板）—— 请手动选中下面文本框里的内容再复制")),
+      ),
+      // ── ② 这次反馈哪张壁纸（自动探测 + 可改选）──
+      React.createElement("div", { className: "we-picker__section" },
+        React.createElement("div", { className: "we-picker__section-head" },
+          React.createElement("span", { className: "we-picker__section-label" }, weT("🖼️ 这次反馈哪张壁纸")),
+        ),
+        React.createElement("p", { className: "we-about__p" },
+          weT("默认填的是你**当前正在用**的那张（自动探测）。问题出在别的壁纸上时，在下拉里改选即可。")),
+        React.createElement("div", { className: "we-feedback__row" },
+          React.createElement("select", {
+            className: "we-feedback__select",
+            value: pickedId || "",
+            onChange: (e) => onPickId(String(e.target.value || "")),
+            title: weT("选一张壁纸，模板里的 ID / 标题 / 类型会跟着变"),
+          },
+            React.createElement("option", { key: "__cur", value: "" }, weT("（跟随当前正在使用的壁纸）")),
+            items.map((w) => React.createElement("option", { key: String(w.id), value: String(w.id) },
+              "#" + String(w.id) + " · " + String(w.title || "") + " · " + String(w.type || ""))),
+          ),
+        ),
+        React.createElement("div", { className: "we-picker__hint" }, pickLabel),
+      ),
+      // ── ③ 诊断（自动取、自动附进模板）──
+      //    取数在 client.js（进本页拉一次、60s TTL），脱敏/截断在上面两个纯函数里。
+      React.createElement("div", { className: "we-picker__section" },
+        React.createElement("div", { className: "we-picker__section-head" },
+          React.createElement("span", { className: "we-picker__section-label" }, weT("🩺 诊断信息（会自动附进模板）")),
+        ),
+        React.createElement("p", { className: "we-about__p" },
+          weT("诊断取自宿主的环形缓冲（最近 80 条渲染页告警），进本页会自动拉一次。里面的 ?token=… 一类凭据会**自动打码**再进模板 —— 但贴之前还是扫一眼更稳妥。")),
+        React.createElement("pre", { className: "we-feedback__diag" },
+          diagText
+          || (diagBusy ? weT("正在读取诊断…") : weT("（暂时是空的：本会话还没有渲染页告警，这是正常状态）"))),
+        React.createElement("div", { className: "we-feedback__btn-row" },
+          React.createElement("button", {
+            className: "we-picker__btn", type: "button", onClick: () => onRefreshDiag(),
+            title: weT("重新从宿主拉一次诊断（不复用 60 秒缓存）"),
+          }, weT("🔄 刷新诊断")),
+          React.createElement("button", {
+            className: "we-picker__btn", type: "button", onClick: () => onCopyDiag(diagText),
+            title: weT("只复制诊断这一段（不含模板其余部分）"),
+          }, weT("📋 复制诊断")),
+        ),
+        diagCopyState === "ok" && React.createElement("div", { className: "we-feedback__status we-feedback__status--ok" },
+          weT("✅ 已复制诊断")),
+        diagCopyState === "fail" && React.createElement("div", { className: "we-feedback__status we-feedback__status--fail" },
+          weT("⚠️ 复制失败（浏览器不让写剪贴板）—— 请手动选中上面的文本再复制")),
+      ),
+      // ── ④ 模板本体（只读展示；能选中、能自己改）──
+      React.createElement("div", { className: "we-picker__section" },
+        React.createElement("div", { className: "we-picker__section-head" },
+          React.createElement("span", { className: "we-picker__section-label" }, weT("📋 填写模板")),
+        ),
+        React.createElement("textarea", {
+          className: "we-feedback__text",
+          readOnly: true,
+          spellCheck: false,
+          rows: 16,
+          value: text,
+          onFocus: (e) => { try { e.target.select(); } catch { /* 选中失败不影响阅读 */ } },
+          title: weT("点一下会全选：手动复制或先看一眼内容都行"),
+        }),
+        React.createElement("p", { className: "we-picker__hint" },
+          weT("模板里的壁纸与环境信息会自动更新；「现象 / 复现步骤 / 期望」需要你自己补。")),
+      ),
+    );
+  }
+
+
 export {
   renderWallpaperTab, renderAppearanceTab, renderAudioTab, renderMascotTab, renderEffectsTab, renderAdvancedTab,
-  renderExtensionsTab, renderAboutTab,
+  renderExtensionsTab, renderAboutTab, renderFeedbackTab,
 };

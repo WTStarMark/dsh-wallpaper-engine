@@ -3518,6 +3518,22 @@ body[data-we-glass-floaters] .we-repo-panel {
     .we-rope--settle, .we-repo-panel { transition: none !important; }
   }
 
+  /* ── 设置导航里**我们自己那颗图标**（nav-icon.js 的 DOM 补丁产物）───────────────
+     补丁把官方兜底齿轮换成一个 span（class 照抄官方那个图标元素、外加 data-we-nav-icon="1"），
+     里面是 16×16 的 inline SVG。**只给这个属性上样式**（官方元素没有它，零副作用）：
+     ⚠️ CSS 注释里**不许出现反引号**：整张样式表住在一个模板字符串里，裸反引号会把字符串提前
+     闭合（实测：构建报 "Unexpected token 'class'"，而产物悄悄留在上一版没被覆盖）。
+       · 外层做成 inline-flex + 居中：SVG 是**行内元素**，落在继承来的文字基线上，视觉上会比
+         文字高几 px（用户口径："壁纸引擎左侧图标有点偏上，要和「壁纸引擎」对齐"）；
+       · line-height 归零：免得继承的行高把图标盒撑高、把图标顶上去；
+       · SVG 显式 display:block：行内基线的抬升来源就是它。
+     选择器写成 nav + 属性选择器（0-1-1）而不是纯属性（0-1-0）：官方对图标盒若有
+     复合类规则，同权重下靠**注入顺序**决胜 —— 这里多一档，稳定压过它。 */
+  nav [data-we-nav-icon] {
+    display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+  }
+  nav [data-we-nav-icon] > svg { display: block; }
+
   /* ── 「关于」页签：静态页（简介 / 致谢 / 仓库 / 交流群二维码）──
      排版口径与设置行一致：正文走主题墨色 token（不新造颜色），只有二维码卡片
      自带一层极薄的玻璃底衬 —— 码图本身是**不透明白底 PNG**，深色主题下若直接
@@ -3561,6 +3577,38 @@ body[data-we-glass-floaters] .we-repo-panel {
   }
   .we-about__qr-hint { font-size: 0.7em; color: var(--we-ink-3, rgba(128, 128, 128, 0.65)); text-align: center; }
   .we-about__foot { text-align: center; }
+
+  /* ── 「反馈」页签：按钮行 / 壁纸下拉 / 模板文本框 / 复制回执 ──
+     颜色只取既有主题 token（与「关于」页同一口径，不新造变量）。
+     下拉复用 .we-picker select 的既有扁平样式，这里只管宽度分配。 */
+  .we-feedback__btn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .we-feedback__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .we-feedback__select { flex: 1 1 240px; min-width: 0; max-width: 100%; }
+  /* 模板文本框：只读展示，但**能选中、能自己改**（复制被浏览器拦掉时的兜底路径）。
+     white-space: pre 保住 "## 小节" 的换行与缩进；高度自适应 + 可纵向拖。 */
+  .we-feedback__text {
+    display: block; width: 100%; box-sizing: border-box; resize: vertical;
+    min-height: 220px; padding: 10px 12px;
+    border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.28));
+    border-radius: 12px; background: var(--dsw-alias-bg-layer-1, rgba(128, 128, 128, 0.08));
+    color: var(--we-ink, inherit); font-family: inherit;
+    font-size: 0.78em; line-height: 1.6;
+    white-space: pre; overflow: auto; user-select: text;
+  }
+  /* 诊断框：等宽 + 可滚（告警行里带 URL，换行会读不成句）；空态也是一行普通墨色文字。 */
+  .we-feedback__diag {
+    margin: 0; padding: 10px 12px; max-height: 200px; overflow: auto;
+    border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.28));
+    border-radius: 12px; background: var(--dsw-alias-bg-layer-1, rgba(128, 128, 128, 0.08));
+    color: var(--we-ink-2, rgba(128, 128, 128, 0.9));
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.72em; line-height: 1.55; white-space: pre-wrap; word-break: break-all;
+    user-select: text;
+  }
+  /* 复制回执：成功/失败只差字重（文案里已带 ✅ / ⚠️），不引新颜色。 */
+  .we-feedback__status { margin-top: 6px; font-size: 0.8em; color: var(--we-ink-2, rgba(128, 128, 128, 0.9)); }
+  .we-feedback__status--ok { color: var(--we-ink, inherit); }
+  .we-feedback__status--fail { color: var(--we-ink, inherit); font-weight: 600; }
 
   /* ── 「扩展」页签：模块槽位（注册表见 panel-tabs.js 的 extensionModules()）──
      每个模块一张卡：极薄的玻璃底衬 + 圆角，与「关于」页的二维码卡同一口径

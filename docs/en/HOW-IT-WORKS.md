@@ -151,8 +151,9 @@ runtime the wallpaper is remembered and degrades to the legacy plain iframe (no 
      **The authoritative list (each route's source line, registration shape and context contract) is [`ROUTE-INDEX.md`](../ROUTE-INDEX.md)** — this file no longer hand-writes the path table *or a route count* (hand-writing always rots: that table long listed `/scene-runtime`, `/scene-manifest` and `/scene-resource`, **all three deleted**, while missing most of the routes that existed; the count drifted the same way).
 - **Client half** (`lib/client.js`): a browser module that fetches the inventory and renders the selected
   wallpaper into a fixed layer *behind* the app columns; it registers the first-level settings page
-  **「壁纸引擎」** (Wallpaper Engine) with six tabs (library / appearance / playback / system /
-  extensions / about — **extensions** is the module container for later features: its registry comes
+  **「壁纸引擎」** (Wallpaper Engine) with seven tabs (library / appearance / playback / system /
+  extensions / about / feedback — **feedback** builds a ready-to-paste issue template with the wallpaper
+  ID auto-detected; **extensions** is the module container for later features: its registry comes
   lazily from `extensionModules()` in `src/panel-tabs.js` (never a top-level reference to a sibling
   module's symbol — importing that source file on its own would throw a ReferenceError), an empty
   registry renders an empty state, and the modules registered today are **click & trail effects**: descriptor `src/ext-fx.js` (the island — one master

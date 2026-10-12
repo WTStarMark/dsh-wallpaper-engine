@@ -2748,7 +2748,7 @@ function keySegBrief(v) {
 // 因此下面这些 applyEffects() / clearEffects() 调用点无需改动（契约见该文件头）。
 
 // ── Picker tabs ─────────────────────────────────────────────────────────────
-// 调节面板的信息架构：六个页签互斥展示（壁纸库 / 外观 / 播放 / 系统 / 扩展 / 关于）。
+// 调节面板的信息架构：七个页签互斥展示（壁纸库 / 外观 / 播放 / 系统 / 扩展 / 关于 / 反馈）。
 // 「关于」不读面板状态、不写设置；外部输入只有两样：那行 star 数与两张二维码 PNG，后者经
 // 宿主路由 /about-qr/<文件名> 直出，客户端只存路径。「扩展」在「关于」**之前**、是**模块
 // 容器**（页签栏里它排第 5、致谢仍压尾）：内容是一张注册表，见 src/panel-tabs.js 的
@@ -2762,6 +2762,9 @@ const PICKER_TABS = [
   { id: "system", get label() { return weT("系统"); } },
   { id: "extensions", get label() { return weT("扩展"); } },
   { id: "about", get label() { return weT("关于"); } },
+  // 「反馈」压在最后（用户口径：关于之后）—— 页签栏的胶囊宽度按 PICKER_TABS.length 现算，
+  // 加这一行就够了，别处零改动（见下面 we-tabs 那段注释）。
+  { id: "feedback", get label() { return weT("反馈"); } },
 ];
 // 旧页签 id → 新 id 的迁移（「字体」并入「外观」）：别把老用户甩回第一页。
 const PICKER_TAB_LEGACY = {
@@ -2869,6 +2872,38 @@ function starCountLabel() {
   }
   if (starCount.tried) return weT("⭐ 暂时取不到 star 数");
   return "";
+}
+
+// ── 「反馈」页签的自动诊断（宿主环形缓冲：GET /diag-log，最近 80 条渲染页告警）──────────
+// 与 star 数同一条纪律：**进「反馈」页才拉**、TTL 内不重复拉、失败不写 at（下次进页立刻重试）。
+// ⚠️ 这里只存**原文**：脱敏（?token=… 打码）与截断都在渲染器的纯函数里做
+// （见 panel-tabs.js 的 feedbackDiagExcerpt）—— 一份数据、一处规则，别在这里先改一遍。
+const FEEDBACK_DIAG_TTL = 60 * 1000;
+let feedbackDiag = { entries: [], at: 0, busy: false, tried: false };
+function loadFeedbackDiag(force) {
+  if (feedbackDiag.busy) return;
+  if (!force && feedbackDiag.tried && Date.now() - feedbackDiag.at < FEEDBACK_DIAG_TTL) return;
+  feedbackDiag = { entries: feedbackDiag.entries, at: feedbackDiag.at, busy: true, tried: true };
+  apiJson("/diag-log")
+    .then((res) => {
+      const d = res && res.data;
+      const list = d && Array.isArray(d.entries) ? d.entries : null;
+      feedbackDiag = {
+        entries: list || feedbackDiag.entries,
+        at: list ? Date.now() : feedbackDiag.at,
+        busy: false, tried: true,
+      };
+      emit();
+    })
+    .catch(() => {
+      feedbackDiag = { entries: feedbackDiag.entries, at: feedbackDiag.at, busy: false, tried: true };
+      emit();
+    });
+}
+// 构建期注入的版本号（scripts/build-client.mjs）。**必须走 typeof 守卫**：单独 eval 本文件的
+// 判据里没有这个符号，直接引用会 ReferenceError 把整个面板带崩（本仓最怕的失败形态）。
+function pluginVersionLabel() {
+  return (typeof WE_PLUGIN_VERSION === "string" && WE_PLUGIN_VERSION) ? WE_PLUGIN_VERSION : "";
 }
 
 // 滑杆右侧那格「数值区」的可输入形态（SliderRow 的 opts.numberEdit 用它）。
@@ -4739,8 +4774,8 @@ function WallpaperPicker() {
     }
   }, []);
 
-  // ── 页签状态：调节面板分六个页签（壁纸库/外观/播放/系统/扩展/关于 —— 前四个由原六域
-  //    合并，「扩展」「关于」后加），每份实例独立记忆（设置页与仓库抽屉互不影响）；只存
+  // ── 页签状态：调节面板分七个页签（壁纸库/外观/播放/系统/扩展/关于/反馈 —— 前四个由原六域
+  //    合并，「扩展」「关于」「反馈」后加），每份实例独立记忆（设置页与仓库抽屉互不影响）；只存
   //    localStorage，不进 config.json。useState 必须在下方早退分支之前调用（Rules of Hooks）。 ──
   const [activeTab, setActiveTab] = React.useState(readSavedPickerTab);
   const switchTab = (id) => {
@@ -4750,14 +4785,19 @@ function WallpaperPicker() {
     // 下钻的库视图也随页签一起退出：否则切走再切回来，看到的还是库而不是该页内容。
     if (selection.pickerOpen) setTransient("pickerOpen", false);
     setTransient("pickerDraft", false);
-    // 「关于」页才去问 star 数（TTL 内是空操作）：别的页签一次网络都不发。
+    // 「关于」页才去问 star 数、「反馈」页才拉诊断（TTL 内都是空操作）：别的页签一次网络都不发。
     if (id === "about") loadStarCount(false);
+    if (id === "feedback") loadFeedbackDiag(false);
     setActiveTab(id);
     try { localStorage.setItem(PICKER_TAB_KEY, id); } catch { /* ignore */ }
   };
   // 停在「关于」页刷新页面这条路径不走 switchTab（activeTab 直接从 localStorage 读出来），
   // 用一次订阅式 effect 补上；TTL 同日历口径，重复触发是空操作。
-  React.useEffect(() => { if (activeTab === "about") loadStarCount(false); }, [activeTab]);
+  React.useEffect(() => {
+    if (activeTab === "about") loadStarCount(false);
+    // 停在「反馈」页刷新页面这条路径不走 switchTab（activeTab 直接从 localStorage 读出来）。
+    if (activeTab === "feedback") loadFeedbackDiag(false);
+  }, [activeTab]);
 
   // ── 外观页各节的折叠态（本档 = 设置页）──────────────────────────────────────────
   //    用户口径（2026-10-11 二次修订）：「设置页则是**全部开启**但也支持隐藏」⇒
@@ -4773,6 +4813,23 @@ function WallpaperPicker() {
     });
   };
   const [pickerUiColorOpen, setPickerUiColorOpen] = React.useState(readSavedPickerUiColorOpen);
+  // ── 「反馈」页签自己的两枚状态（不进 config.json，也不落 localStorage：它们是页面瞬时态）──
+  // ① 选中的壁纸 id（"" = 跟随当前正在用的那张，即**自动探测**的默认态）；
+  // ② "已复制"提示（"" | "ok" | "fail"），2.5s 后自动收掉。
+  const [feedbackPick, setFeedbackPick] = React.useState("");
+  const [feedbackCopy, setFeedbackCopy] = React.useState("");
+  // 复制模板：成功/失败都给一句可见的回执（失败时界面会提示"手动选中再复制"），
+  // 2.5s 后自动收掉 —— 不做 toast，页签内一行字就够。
+  // tag 区分是哪一个按钮的回执（"template" 模板 / "diag" 诊断），两个位置各显示自己那条。
+  const copyFeedbackText = (text, tag) => {
+    const scope = tag || "template";
+    let p = null;
+    try { p = copyTextToClipboard(String(text || "")); } catch { p = null; }
+    Promise.resolve(p).then((ok) => {
+      setFeedbackCopy(scope + (ok ? "-ok" : "-fail"));
+      setTimeout(() => setFeedbackCopy(""), 2500);
+    }, () => setFeedbackCopy(scope + "-fail"));
+  };
   const togglePickerUiColorSection = () => {
     setPickerUiColorOpen((prev) => {
       const next = !prev;
@@ -4911,9 +4968,10 @@ function WallpaperPicker() {
   // 渲染器只拿值 + 回调（同模态框那条契约）。判定就一句：
   // token 变了且不在加载中才重拉。
   // ── 页签面板内容（函数声明提升，renderActiveTab 在 return 里先调用）──────
-  // 六页签 = 三个单渲染器（「外观」「扩展」「关于」）+ 两个合并渲染器（「播放」= 效果 + 声音，
-  // 「系统」= 吉祥物 + 高级）+ 壁纸库。「关于」不取任何 ctx 字段（静态页）；「扩展」自己也不读
-  // 字段，但要把 ctx **整包转交**给注册表里的模块（每个模块的控件由它自己的渲染器画）。
+  // 七页签 = 四个单渲染器（「外观」「扩展」「关于」「反馈」）+ 两个合并渲染器（「播放」= 效果 +
+  // 声音，「系统」= 吉祥物 + 高级）+ 壁纸库。「关于」不取任何 ctx 字段（静态页）；「反馈」只取
+  // 当前壁纸与库列表（生成 issue 模板，同样一个设置都不写）；「扩展」自己也不读字段，但要把 ctx
+  // **整包转交**给注册表里的模块（每个模块的控件由它自己的渲染器画）。
   const extensionCtx = () => ({
     sel: selection,
     onFxEnabled, onFxClick, onFxClickStyle, onFxClickSize, onFxClickGlow,
@@ -4932,6 +4990,21 @@ function WallpaperPicker() {
   });
   const renderActiveTab = () => {
     if (activeTab === "about") return renderAboutTab({});
+    // 「反馈」：把本档选中态 + 库列表 + 一键复制交给渲染器；环境三行由渲染器自己探测
+    // （adapterDetectedLabel / navigator.userAgent / 窗口尺寸，都带 typeof 守卫）。
+    if (activeTab === "feedback") return renderFeedbackTab({
+      current, wallpapers: playableList, pickedId: feedbackPick, onPickId: setFeedbackPick,
+      copyState: feedbackCopy === "template-ok" ? "ok" : (feedbackCopy === "template-fail" ? "fail" : ""),
+      onCopyTemplate: (t) => copyFeedbackText(t, "template"),
+      // 自动填的两样：插件版本（构建期注入）与诊断摘要（宿主环形缓冲；脱敏与截断由渲染器的
+      // 纯函数负责 —— 这里只把原文递过去）。
+      pluginVersion: pluginVersionLabel(),
+      diagEntries: feedbackDiag.entries, diagBusy: feedbackDiag.busy,
+      diagCopyState: feedbackCopy === "diag-ok" ? "ok" : (feedbackCopy === "diag-fail" ? "fail" : ""),
+      onCopyDiag: (t) => copyFeedbackText(t, "diag"),
+      onRefreshDiag: () => loadFeedbackDiag(true),
+      repoUrl: ABOUT_REPO_URL,
+    });
     if (activeTab === "extensions") return renderExtensionsTab(extensionCtx());
     if (activeTab === "appearance") return renderAppearanceTab({
       setSetting, setTransient,
@@ -4998,7 +5071,7 @@ function WallpaperPicker() {
       React.createElement("span", { className: "we-picker__card-badge" }, String(playableList.length)),
       React.createElement("span", { className: "we-picker__card-desc" }, weT("本地 Wallpaper Engine 壁纸 · 液态玻璃主题")),
     ),
-    // ── 页签栏（分段式）：六个页签互斥展示，替代三十控件的单列长滚动。
+    // ── 页签栏（分段式）：七个页签互斥展示，替代三十控件的单列长滚动。
     //    指示胶囊随 activeTab 平移（transform 合成器属性，不引发布局）；宽度按
     //    PICKER_TABS.length 现算 ⇒ 加页签只改那张表，这里零改动。 ──
     React.createElement("div", { className: "we-tabs", role: "tablist", "aria-label": weT("壁纸引擎设置分区") },

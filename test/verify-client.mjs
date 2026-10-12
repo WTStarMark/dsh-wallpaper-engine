@@ -745,17 +745,18 @@ setTimeout(async () => {
     localStorage.removeItem(TAB_KEY);
     let tree = renderPicker();
     let treeText = JSON.stringify(tree);
-    assert.ok(countMatches(tree, /"role":"tab"/g) === 6, 'tab bar renders (6 tabs):');
+    assert.ok(countMatches(tree, /"role":"tab"/g) === 7, 'tab bar renders (7 tabs):');
     assert.ok(treeText.includes('"we-tabs__tab we-tabs__tab--active"') && treeText.includes('自动轮播'), 'default tab is 壁纸库:');
     assert.ok(treeText.includes('"选择壁纸"'), 'library tab has 选择壁纸:');
     assert.ok(treeText.includes('自定义壁纸'), 'library tab has 自定义壁纸:');
     console.log('other tabs keep their controls out of the tree:',
       !treeText.includes('玻璃透明度') && !treeText.includes('字体自定义') && !treeText.includes('吉祥物大小'));
 
-    // ── 设置页签重组（UI 重构）：六个页签 = 壁纸库 / 外观 / 播放 / 系统 / 扩展 / 关于 ──
+    // ── 设置页签重组（UI 重构）：七个页签 = 壁纸库 / 外观 / 播放 / 系统 / 扩展 / 关于 / 反馈 ──
     //    原六页签合并：壁纸 → 壁纸库；效果+声音 → 播放；吉祥物+高级 → 系统；外观原样；
     //    「扩展」是后加的**模块容器**（注册表在 src/panel-tabs.js 的 extensionModules()，
-    //    排在「关于」之前）；「关于」是后加的静态页（**排在最后**，唯一不读面板状态的那个）。
+    //    排在「关于」之前）；「关于」是后加的静态页（不读面板状态）；「反馈」压在**最后**
+    //    （用户口径：关于后面加一个反馈）—— issue 模板 + 壁纸 ID 自动探测。
     {
       const tabButtons = [];
       (function walk(node) {
@@ -765,11 +766,11 @@ setTimeout(async () => {
         if (Array.isArray(node.children)) node.children.forEach(walk);
       })(tree);
       const labels = tabButtons.map((b) => String((b.children || [])[0] || ''));
-      assert.deepEqual(labels, ['壁纸库', '外观', '播放', '系统', '扩展', '关于'],
-        'tab bar must render exactly 壁纸库/外观/播放/系统/扩展/关于');
+      assert.deepEqual(labels, ['壁纸库', '外观', '播放', '系统', '扩展', '关于', '反馈'],
+        'tab bar must render exactly 壁纸库/外观/播放/系统/扩展/关于/反馈（反馈压尾）');
       // 指示胶囊的宽度按页签数现算 —— 加/减页签忘改这里会当场错位（且只在视觉上错）。
-      assert.ok(JSON.stringify(tree).includes('calc((100% - 6px) / 6)'),
-        'tab pill width must be derived from PICKER_TABS.length (6)');
+      assert.ok(JSON.stringify(tree).includes('calc((100% - 6px) / 7)'),
+        'tab pill width must be derived from PICKER_TABS.length (7)');
     }
 
     // ── 「扩展」页签（第六个）：一个**模块容器** —— 表里没模块时只画空态 ──
@@ -1172,8 +1173,9 @@ setTimeout(async () => {
         return out;
       };
       const tabs = collectByClass(tree, 'we-tabs__tab');
-      assert.ok(tabs.length === 6 && String(String(tabs[5].children[0])) === '关于',
-        '「关于」必须是最后一枚页签');
+      assert.ok(tabs.length === 7 && String(String(tabs[5].children[0])) === '关于'
+        && String(String(tabs[6].children[0])) === '反馈',
+        '「关于」之后必须紧跟「反馈」（反馈压尾）');
       assert.ok(treeText.includes('"we-tabs__tab we-tabs__tab--active"')
         && collectByClass(tree, 'we-tabs__tab--active').length === 1
         && String(String(collectByClass(tree, 'we-tabs__tab--active')[0].children[0])) === '关于',
@@ -1224,6 +1226,56 @@ setTimeout(async () => {
       setTab('system');
       assert.ok(!JSON.stringify(renderPicker()).includes('去 GitHub 点亮 Star'),
         'negative control: 系统页不得混入关于页的内容');
+      localStorage.removeItem(TAB_KEY);
+    }
+
+    // ── 「反馈」页签（压尾）：issue 模板 + 壁纸 ID **自动探测** ──
+    //    守三件用户一眼可见的事：① 模板里带**当前壁纸**的 ID / 标题 / 类型（台架里当前壁纸是 a）；
+    //    ② 预填 issue 的正文与文本框**同源**（两处各写一份必漂）；③ 内容按页签隔离。
+    //    更细的（改选生效 / 复制交出同一份 / 5 条负对照）在 test/verify-feedback.mjs。
+    {
+      setTab('feedback');
+      tree = renderPicker();
+      treeText = JSON.stringify(tree);
+      const byClass = (root, token) => {
+        const out = [];
+        (function walk(node) {
+          if (!node || typeof node !== 'object') return;
+          if (Array.isArray(node)) { node.forEach(walk); return; }
+          const cls = typeof node.props?.className === 'string' ? node.props.className : '';
+          if (cls.split(/\s+/).includes(token)) out.push(node);
+          if (Array.isArray(node.children)) node.children.forEach(walk);
+        })(root);
+        return out;
+      };
+      assert.ok(treeText.includes('"we-feedback__text"'), '「反馈」页签必须画出模板文本框');
+      for (const anchorText of ['## 现象', '## 复现步骤', '## 期望', '## 环境', '## 壁纸',
+        '去 GitHub 新建 issue', '复制模板']) {
+        assert.ok(treeText.includes(anchorText), '「反馈」页签必须包含「' + anchorText + '」');
+      }
+      const ta = byClass(tree, 'we-feedback__text')[0];
+      const fbText = ta ? String(ta.props.value || '') : '';
+      // 只判「**自动探测到了正在用的那张**」（三行都有值、类型是四档之一）。
+      // ⚠️ **不写死具体是哪张**：跑到这里时前面的轮播用例已经把选中项换过了（实测是 b 而不是
+      // 初始的 a）—— 写死值会随用例顺序漂。精确的"改选生效 / ID 跟着变"在 test/verify-feedback.mjs
+      // 里用受控的 current 断言。
+      const lineOf = (token) => (fbText.match(new RegExp('- ' + token + '：(.*)')) || [])[1] || '';
+      const idLine = lineOf('壁纸 ID');
+      const titleLine = lineOf('标题');
+      const typeLine = lineOf('类型');
+      assert.ok(idLine && idLine !== '（未指定）' && titleLine && titleLine !== '（未指定）' && typeLine,
+        '壁纸三行必须自动填上正在用的那张（实得 id=' + idLine + ' / title=' + titleLine + ' / type=' + typeLine + '）');
+      assert.ok(/^(video|web|image|scene)$/.test(typeLine), '类型行必须是宿主认识的四种之一：' + typeLine);
+      const issueLink = byClass(tree, 'we-picker__btn')
+        .find((n) => n.type === 'a' && /issues\/new/.test(String(n.props.href || '')));
+      assert.ok(issueLink, '必须有「去 GitHub 新建 issue」链接');
+      const href = String(issueLink.props.href);
+      assert.ok(decodeURIComponent(href.slice(href.indexOf('body=') + 5)) === fbText,
+        '预填 issue 的正文必须与文本框里的模板同源');
+      // negative control：切回关于页不得看到反馈页的内容（内容真的按页签隔离）。
+      setTab('about');
+      assert.ok(!JSON.stringify(renderPicker()).includes('## 现象'),
+        'negative control: 关于页不得混入反馈页的模板');
       localStorage.removeItem(TAB_KEY);
     }
 

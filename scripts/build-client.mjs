@@ -345,6 +345,11 @@ const outline = [
   '\t\tvar exports = module.exports;',
   '\t\tObject.defineProperty(exports, Symbol.toStringTag, { value: "Module" });',
   indent(prelude),
+  // 构建期注入的**插件版本**（唯一真源 = package.json 的 version）。客户端没有别的途径拿到它：
+  // 宿主半为这一行加路由要重启宿主才生效，而"烧进产物"刷新页面就有、且不会漂。
+  // 代码侧读它必须走 typeof 守卫（单独 eval src/client.js 的判据里没有这个符号）。
+  '\t\t// ── 构建期注入：插件版本（源：package.json 的 version）──',
+  `\t\tvar WE_PLUGIN_VERSION = ${JSON.stringify(pkg.version)};`,
   '\t\t// ── 客户端正文（src/client.js）────────────────────────────────────────',
 ];
 
@@ -356,6 +361,12 @@ outline.push('});');
 outline.push('');
 
 const output = outline.join('\n');
+
+// 注入必须真的落进产物（改了装配结构却忘了它 ⇒ 版本号在界面上变成空白，且没人会发现）。
+if (!output.includes(`var WE_PLUGIN_VERSION = ${JSON.stringify(pkg.version)};`)) {
+  console.error('[build-client] 产物缺少构建期注入的 WE_PLUGIN_VERSION（装配结构变了？）');
+  process.exit(1);
+}
 
 // 产物必须可解析 —— 内联后出现重复声明/括号错配时在这里就红，而不是等到用户页面白屏。
 try {
